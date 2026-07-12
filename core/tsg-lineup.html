@@ -207,7 +207,8 @@ const AUDIO_LEVELS = {
 // Timing constants (current values preserved exactly)
 const TIMING = {
     STEREO_CYCLE_SEC: 3.0,      // Stereo ident cycle
-    STEREO_LEFT_ON_SEC: 2.75,   // LEFT channel on duration
+    STEREO_LEFT_ON_SEC: 2.75,   // LEFT channel on duration (one 250 ms gap)
+    STEREO_GAP_SEC: 0.25,       // GLITS interruption length (EBU Tech 3304)
     SYNC_CYCLE_SEC: 4.0,        // Sync pattern cycle
     PIP_DURATION_SEC: 0.04,     // 40ms pip
     FLASH_DURATION_SEC: 0.04    // 40ms flash
@@ -1046,11 +1047,19 @@ function startStereoIdent() {
     }, 'Stereo ident start');
 }
 function updateStereoIdent() {
+    // GLITS-style channel identification (EBU Tech 3304): the LEFT leg is
+    // interrupted by a single 250 ms gap per cycle, the RIGHT leg by two gaps,
+    // so either channel can be identified on its own by counting interruptions.
+    // The gaps interleave, so at least one leg always carries tone.
     let cs = getCentralSeconds();
-    let tInThree = cs % TIMING.STEREO_CYCLE_SEC;
-    let leftOn = tInThree < TIMING.STEREO_LEFT_ON_SEC;
+    let t = cs % TIMING.STEREO_CYCLE_SEC;
+    const C = TIMING.STEREO_CYCLE_SEC;
+    const G = TIMING.STEREO_GAP_SEC;
+    let leftOn = t < TIMING.STEREO_LEFT_ON_SEC;              // one gap: [C-G, C)
+    let rightOn = !((t >= C - 4 * G && t < C - 3 * G) ||     // two gaps: [C-4G, C-3G)
+                    (t >= C - 2 * G && t < C - G));          //           [C-2G, C-G)
     if (identGainL) identGainL.gain.value = leftOn ? AUDIO_LEVELS.STEREO_IDENT : 0;
-    if (identGainR) identGainR.gain.value = AUDIO_LEVELS.STEREO_IDENT;
+    if (identGainR) identGainR.gain.value = rightOn ? AUDIO_LEVELS.STEREO_IDENT : 0;
 }
 function stopStereoIdent() {
     try {
