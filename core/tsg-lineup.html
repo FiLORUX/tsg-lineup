@@ -499,8 +499,17 @@ async function initSlave(offerData) {
         }
     };
 
-    // Set remote description (master's offer)
-    const offer = JSON.parse(atob(offerData));
+    // Set remote description (master's offer). The blob is pasted or scanned by
+    // hand, so a truncated/corrupt code must fail loudly rather than leave the UI
+    // stuck on "Connecting…" forever.
+    let offer;
+    try {
+        offer = JSON.parse(atob(offerData));
+    } catch (e) {
+        connectionState = 'failed';
+        console.error('[SLAVE] Invalid offer data — could not decode:', e.message);
+        throw new Error('Invalid offer data — check the pasted/scanned code and retry');
+    }
     await peerConnection.setRemoteDescription(offer);
 
     // Create answer
@@ -537,7 +546,14 @@ async function acceptAnswer(answerData) {
         return;
     }
 
-    const answer = JSON.parse(atob(answerData));
+    let answer;
+    try {
+        answer = JSON.parse(atob(answerData));
+    } catch (e) {
+        connectionState = 'failed';
+        console.error('[MASTER] Invalid answer data — could not decode:', e.message);
+        throw new Error('Invalid answer data — check the pasted/scanned code and retry');
+    }
     await peerConnection.setRemoteDescription(answer);
     console.log('[MASTER] Answer accepted - connection established');
 }
