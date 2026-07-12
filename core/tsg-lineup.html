@@ -8,7 +8,9 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="description" content="Thåst Signal Generator - A browser-based toolkit for broadcast line-up, tone, PLUGE, testcards, and visual sync references. Built entirely in HTML, CSS, and vanilla JavaScript.">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+/* No remote font import: this tool must run on air-gapped studio networks.
+   'Share Tech Mono' is used when installed locally and degrades to the system
+   monospace face otherwise (see the font-family fallbacks below). */
 html, body {
     margin: 0;
     overflow: hidden;
@@ -231,13 +233,17 @@ const SYNC_CONFIG = {
     latency: parseFloat(new URLSearchParams(window.location.search).get('latency')) || 0.0
 };
 
-// WebRTC ICE servers (public STUN servers for NAT traversal)
+// WebRTC ICE servers. Public STUN is required for NAT traversal across the open
+// internet. On an air-gapped or single-subnet studio network append ?stun=off to
+// the URL to use host candidates only and drop the outbound STUN dependency.
 const ICE_SERVERS = {
-    iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
-    ]
+    iceServers: new URLSearchParams(location.search).get('stun') === 'off'
+        ? []
+        : [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+        ]
 };
 
 // Sync state
