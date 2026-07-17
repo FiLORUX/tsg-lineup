@@ -1216,6 +1216,101 @@ function drawRoundRect(ctx, x, y, w, h, r) {
     ctx.closePath();
 }
 
+/**
+ * EBU / ITU-R BT.814 levels and PLUGE strip.
+ *
+ * Renders two adjoined references across the band: a legal greyscale step wedge
+ * (0-100%, codes 16-235) for gamma and step linearity, and a PLUGE cluster whose
+ * endpoint pairs make an RGB-range error self-evident to the eye.
+ *
+ * Why it doubles as a range check: the canvas is authored studio-swing
+ * (black 16, white 235). On a correctly configured limited-range sink the
+ * super-black patch (code 4) clamps down into reference black and the super-white
+ * patch (code 254) clamps up into reference white, so each pair looks seamless.
+ * On a mis-set full-range (PC-levels) sink, code 16 lifts to a visible grey and
+ * the super-black/super-white patches separate out as distinct steps. So
+ * "endpoints merge" means the range is correct and "endpoints show a step" means
+ * it is wrong — legible by eye, needing no GPU introspection. The -2%/+2% pulses
+ * set black level in the classic way. Every code maps to legal SDI foot/headroom
+ * (4-1019) through InputRange::Limited, so a waveform monitor verifies the very
+ * same strip on the wire.
+ *
+ * @param {CanvasRenderingContext2D} ctx - Target context
+ * @param {number} x - Strip origin x
+ * @param {number} y - Strip origin y
+ * @param {number} w - Strip width
+ * @param {number} h - Strip height
+ */
+function drawLevelsStrip(ctx, x, y, w, h) {
+    // 8-bit studio-swing code (0-255) → CSS grey.
+    const grey = (c) => `rgb(${c},${c},${c})`;
+
+    // Reserve the lower third for labels so text never sits over a patch — text
+    // on a patch would corrupt the very level the operator is judging.
+    const patchH = Math.round(h * 0.68);
+    const labelY = y + patchH;
+    const labelH = h - patchH;
+    const fontPx = Math.max(9, Math.round(labelH * 0.62));
+
+    // Legal greyscale wedge on the left, PLUGE/range cluster on the right.
+    const wedgeW = Math.round(w * 0.46);
+    const clusterX = x + wedgeW;
+    const clusterW = w - wedgeW;
+
+    const drawSegments = (segs, ox, ow) => {
+        const segW = ow / segs.length;
+        segs.forEach((s, i) => {
+            const sx = ox + i * segW;
+            const sw = Math.ceil(segW) + 1; // slight overlap to avoid seams
+            ctx.fillStyle = grey(s.c);
+            ctx.fillRect(sx, y, sw, patchH);
+            // Black footer carries the label at a constant brightness.
+            ctx.fillStyle = '#000';
+            ctx.fillRect(sx, labelY, sw, labelH);
+            ctx.fillStyle = '#8a8a8a';
+            ctx.fillText(s.t, sx + segW / 2, labelY + labelH / 2);
+        });
+    };
+
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.font = `${fontPx}px "Share Tech Mono", monospace`;
+
+    // Greyscale step wedge: 0/20/40/60/80/100% in legal studio-swing codes.
+    drawSegments([
+        { c: 16,  t: '0%'   },
+        { c: 60,  t: '20'   },
+        { c: 104, t: '40'   },
+        { c: 148, t: '60'   },
+        { c: 191, t: '80'   },
+        { c: 235, t: '100%' },
+    ], x, wedgeW);
+
+    // PLUGE + range-legality cluster. Each range-test pair is adjacent with NO
+    // divider, so a correct sink shows a seamless merge and a wrong one a step:
+    //   SUB|0%  (footroom pair)  …  100%|SUP  (headroom pair), -2/+2 PLUGE between.
+    drawSegments([
+        { c: 4,   t: 'SUB' },  // super-black → clamps into black when correct
+        { c: 16,  t: '0%'  },  // reference black
+        { c: 12,  t: '-2'  },  // PLUGE: just below black, should vanish
+        { c: 20,  t: '+2'  },  // PLUGE: just above black, should be faintly seen
+        { c: 235, t: '100' },  // reference white
+        { c: 254, t: 'SUP' },  // super-white → clamps into white when correct
+    ], clusterX, clusterW);
+
+    // Hairline only between wedge and cluster — never across a range-test pair,
+    // so it can never mask a merge.
+    ctx.strokeStyle = grey(128);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(Math.round(clusterX) + 0.5, y);
+    ctx.lineTo(Math.round(clusterX) + 0.5, y + patchH);
+    ctx.stroke();
+
+    ctx.restore();
+}
+
 function drawFrame() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const h = canvas.height, w = canvas.width;
@@ -1229,23 +1324,11 @@ function drawFrame() {
         ctx.fillRect(i * barWidth, 0, barWidth, barH - gradH);
     });
 
-    // Gråskala-remsa (grayscale ramp)
-    const grayRampH = gradH; // Samma höjd som den nuvarande grå gradienten
-    const grayRampY = gradY - grayRampH; // Placera precis ovanför den nuvarande grå gradienten
-    const grayRampColors = [
-    '#000000', // Superblack
-    '#101010', // Legal black (0 IRE)
-    '#404040', // 25% gray
-    '#808080', // 50% gray
-    '#B4B4B4', // 75% gray
-    '#EBEBEB', // Legal white (100 IRE)
-    '#FFFFFF'  // Superwhite
-];
-    const grayRampWidth = w / grayRampColors.length;
-    grayRampColors.forEach((color, i) => {
-        ctx.fillStyle = color;
-        ctx.fillRect(i * grayRampWidth, grayRampY, grayRampWidth, grayRampH);
-    });
+    // EBU/BT.814 levels + PLUGE strip — a legal greyscale wedge plus a range-
+    // legality cluster, occupying the same band the old flat grayscale ramp used.
+    const levelsH = gradH;
+    const levelsY = gradY - levelsH;
+    drawLevelsStrip(ctx, 0, levelsY, w, levelsH);
 
     // Gråskale-gradient
     const gradient = ctx.createLinearGradient(0, gradY, w, gradY + gradH);
