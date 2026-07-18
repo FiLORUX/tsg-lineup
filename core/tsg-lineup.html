@@ -1311,34 +1311,60 @@ function drawLevelsStrip(ctx, x, y, w, h) {
     ctx.restore();
 }
 
+// Static reference layer from the shared signal spec, rendered once per size and
+// cached by the module script near the end of the file. Returns an offscreen
+// canvas, or null before the module has loaded (or if it failed) so drawFrame
+// falls back to the bespoke drawing without ever blanking.
+function getSpecStaticLayer(w, h) {
+    try {
+        return (typeof window !== 'undefined' && window.__specStaticLayer)
+            ? window.__specStaticLayer(w, h)
+            : null;
+    } catch (e) {
+        console.warn('Spec static layer render failed; using bespoke drawing:', e);
+        return null;
+    }
+}
+
 function drawFrame() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const h = canvas.height, w = canvas.width;
     const barH = h * 0.75, redY = h * 0.75, redH = h * 0.25;
     
 
-    // Färgbalk
-    const barWidth = w / ebuColors709.length;
-    ebuColors709.forEach((color, i) => {
-        ctx.fillStyle = color;
-        ctx.fillRect(i * barWidth, 0, barWidth, barH - gradH);
-    });
-
-    // EBU/BT.814 levels + PLUGE strip — a legal greyscale wedge plus a range-
-    // legality cluster, occupying the same band the old flat grayscale ramp used.
+    // Static reference layer: bars, levels-strip patches, gradient, red field.
+    // When the signal-domain renderer module is ready it composites the whole
+    // band from the shared spec (the same source of truth that drives the SDI
+    // wire); until then — and as a robust fallback — the bespoke drawing runs.
     const levelsH = gradH;
     const levelsY = gradY - levelsH;
-    drawLevelsStrip(ctx, 0, levelsY, w, levelsH);
+    const specLayer = getSpecStaticLayer(w, h);
+    if (specLayer) {
+        ctx.drawImage(specLayer, 0, 0);
+        // Labels sit on top — text is an overlay, not part of the reference
+        // signal, so it is not baked into the spec layer (patches redraw identically).
+        drawLevelsStrip(ctx, 0, levelsY, w, levelsH);
+    } else {
+        // Färgbalk
+        const barWidth = w / ebuColors709.length;
+        ebuColors709.forEach((color, i) => {
+            ctx.fillStyle = color;
+            ctx.fillRect(i * barWidth, 0, barWidth, barH - gradH);
+        });
 
-    // Gråskale-gradient
-    const gradient = ctx.createLinearGradient(0, gradY, w, gradY + gradH);
-    gradient.addColorStop(0, '#101010'); gradient.addColorStop(1, '#EBEBEB');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, gradY, w, gradH);
+        // EBU/BT.814 levels + PLUGE strip.
+        drawLevelsStrip(ctx, 0, levelsY, w, levelsH);
 
-    // Rött fält
-    ctx.fillStyle = redRec709;
-    ctx.fillRect(0, redY, w, redH);
+        // Gråskale-gradient
+        const gradient = ctx.createLinearGradient(0, gradY, w, gradY + gradH);
+        gradient.addColorStop(0, '#101010'); gradient.addColorStop(1, '#EBEBEB');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, gradY, w, gradH);
+
+        // Rött fält
+        ctx.fillStyle = redRec709;
+        ctx.fillRect(0, redY, w, redH);
+    }
 
     // Centre cross + cirkel
     const cx = w / 2, cy = h / 2;
@@ -1738,7 +1764,35 @@ function init() {
 }
 init();
 </script>
-<!-- 
+<!--
+    Signal-domain renderer: composes the static reference layer (bars, PLUGE /
+    levels strip, gradient, red field) from the SAME spec that drives the 10-bit
+    SDI wire, so the preview and the wire are two encodes of one source of truth.
+    ES-module (deferred), so drawFrame uses the bespoke fallback until it loads
+    and whenever it cannot (e.g. a file:// open where module fetch is blocked).
+-->
+<script type="module">
+    import { renderSpecToImageData } from './signal-render.js';
+    import { EBU_LINEUP } from './ebu-lineup-spec.js';
+
+    let cached = null;
+    let cachedKey = '';
+    // Render once per output size and cache; drawFrame calls this every frame.
+    window.__specStaticLayer = (w, h) => {
+        const key = w + 'x' + h;
+        if (!cached || cachedKey !== key) {
+            const off = document.createElement('canvas');
+            off.width = w;
+            off.height = h;
+            off.getContext('2d').putImageData(renderSpecToImageData(EBU_LINEUP, w, h), 0, 0);
+            cached = off;
+            cachedKey = key;
+        }
+        return cached;
+    };
+    console.log('[signal-render] static layer bound to the shared ebu-lineup spec');
+</script>
+<!--
     TSG Suite - Thåst Signal Generator
     A browser-based toolkit for broadcast line-up, tone, PLUGE, testcards, and visual sync references.
     Built entirely in HTML, CSS, and vanilla JavaScript.
