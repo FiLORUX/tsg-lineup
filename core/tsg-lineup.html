@@ -1773,12 +1773,26 @@ init();
 -->
 <script type="module">
     import { renderSpecToImageData } from './signal-render.js';
-    import { EBU_LINEUP } from './ebu-lineup-spec.js';
+
+    // Fetch the single shared spec — the exact same file the Rust renderer
+    // compiles in, so the SDI wire and this preview encode one source of truth.
+    // Over HTTP this succeeds; a file:// open blocks the fetch, so we fall back
+    // to the bespoke drawing (window.__specStaticLayer then keeps returning null).
+    let EBU_LINEUP = null;
+    try {
+        EBU_LINEUP = await fetch('../patterns/ebu-lineup.json').then((r) => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        });
+    } catch (e) {
+        console.warn('[signal-render] shared spec unavailable (e.g. file://); using bespoke drawing:', e);
+    }
 
     let cached = null;
     let cachedKey = '';
     // Render once per output size and cache; drawFrame calls this every frame.
     window.__specStaticLayer = (w, h) => {
+        if (!EBU_LINEUP) return null;
         const key = w + 'x' + h;
         if (!cached || cachedKey !== key) {
             const off = document.createElement('canvas');
@@ -1790,7 +1804,7 @@ init();
         }
         return cached;
     };
-    console.log('[signal-render] static layer bound to the shared ebu-lineup spec');
+    if (EBU_LINEUP) console.log('[signal-render] static layer bound to the shared ebu-lineup spec');
 </script>
 <!--
     TSG Suite - Thåst Signal Generator
