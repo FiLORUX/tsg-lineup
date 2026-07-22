@@ -1,7 +1,7 @@
 # TSG Lineup
 
 Broadcast line-up in a browser tab. EBU colour bars, PLUGE, reference test cards
-and frame-accurate multi-device sync — static HTML, no server, no build, offline
+and frame-accurate multi-device sync. Static HTML, no server, no build, offline
 from the gallery to a Raspberry Pi.
 
 What the browser previews and what the desktop build puts on the SDI wire are two
@@ -11,13 +11,13 @@ values and the conformance rules are in **[SPEC.md](SPEC.md)**.
 | | |
 |---|---|
 | Live | <https://thåst.se/tsg/lineup> |
-| Installers — SDI over DeckLink | [Releases](../../releases) |
+| Installers (SDI over DeckLink) | [Releases](../../releases) |
 | Signal specification | [SPEC.md](SPEC.md) |
 
 ## Layout
 
 ```
-index.html            → core/tsg-lineup.html
+index.html            core/tsg-lineup.html is the entry
 core/
   tsg-lineup.html     the application: generator, patterns, sync
   signal-render.js    renderer, bit-exact with the SDI master
@@ -37,7 +37,7 @@ open core/tsg-lineup.html          # or:  python3 -m http.server 8080
 
 EBU 100/0/75/0 bars · PLUGE · ChromaDuMonde · Philips PM5644 · countdown leader
 with tone · slates · clock. Sync is master/display over WebRTC, paired by a
-scan-to-connect QR handshake — no server in the path.
+scan-to-connect QR handshake, no server in the path.
 
 `Q` QR · `F` fullscreen · `Space` run/stop · `?room=studio-a&role=master&state=sync`
 
