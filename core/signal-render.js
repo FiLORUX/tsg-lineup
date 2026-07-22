@@ -5,7 +5,7 @@
  *
  * The browser half of the signal-spec architecture. It consumes the SAME
  * format-independent pattern spec the Rust renderer does (see
- * `docs/SIGNAL-SPEC.md`) and evaluates it to the 8-bit canvas — so the preview
+ * [`../SPEC.md`](../SPEC.md)) and evaluates it to the 8-bit canvas — so the preview
  * and the 10-bit SDI wire are two faithful encodes of one source of truth, never
  * two hand-authored patterns that can drift.
  *
@@ -26,7 +26,7 @@ export const STRIP_WEDGE_FRAC = 0.46;
 
 /**
  * Quantise a signal fraction to an 8-bit limited-range preview code
- * (`docs/SIGNAL-SPEC.md` §6.2). Identical to the Rust `enc8`.
+ * (`../SPEC.md` §5.3). Identical to the Rust `enc8`.
  *
  * @param {number} s - Signal fraction (0.0 = black, 1.0 = white; may exceed [0,1]).
  * @returns {number} 8-bit code, 0–255.

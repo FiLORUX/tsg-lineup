@@ -109,4 +109,5 @@ patterns follow:
 
 ## Licence
 
-© David Thåst. Part of the [TSG](https://thåst.se/tsg) suite.
+Licensed under the [Apache License 2.0](LICENSE). © 2026 David Thåst.
+Part of the [TSG](https://thåst.se/tsg) suite.

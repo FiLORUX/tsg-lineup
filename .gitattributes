@@ -1,0 +1,17 @@
+# Normalise all text to LF in the repository and on checkout, on every platform.
+# Keeps the tree byte-identical across macOS, Linux and Windows/WSL and stops a
+# stray CR from ever reaching a shell shebang.
+* text=auto eol=lf
+
+# Windows scripts must stay CRLF to run.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binary assets — never normalise or diff as text.
+*.png   binary
+*.ico   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.woff  binary
+*.woff2 binary
