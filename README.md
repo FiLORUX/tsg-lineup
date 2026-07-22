@@ -1,18 +1,29 @@
 # TSG Lineup
 
-**Thåst Signal Generator – Broadcast Test Pattern Suite**
+**Thåst Signal Generator — broadcast test-pattern suite**
 
-Browser-based toolkit for broadcast line-up, tone generation, test patterns, and multi-device sync.
-Zero dependencies. Single HTML files. Works offline on any device.
+A browser-based, zero-dependency generator for broadcast line-up: colour bars,
+PLUGE, reference test patterns and frame-accurate multi-device sync. No build
+step, no frameworks — a single set of static HTML that runs offline on anything
+from a studio PC to a Raspberry Pi or a phone.
+
+- **Live:** <https://thåst.se/tsg/lineup>
+- **Signal specification:** [`SPEC.md`](SPEC.md) — the normative signal-domain,
+  colorimetry and conformance spec.
+- **Desktop app (SDI output):** cross-platform installers are published under
+  [Releases](../../releases). The desktop build adds true 10-bit SDI output over
+  Blackmagic DeckLink hardware.
 
 ---
 
 ## Philosophy
 
-- **Self-contained** – Each HTML file works standalone, no build step
-- **Offline-first** – Runs on Raspberry Pi, iPad, phone without internet
-- **Broadcast-grade** – Frame-accurate sync, proper colour standards
-- **Zero dependencies** – Pure HTML/CSS/JS, no npm, no frameworks
+- **Self-contained** — each page runs standalone, no build step.
+- **Offline-first** — no server, no internet; a QR handshake links devices
+  directly.
+- **Broadcast-grade** — exact colour standards and a single signal source of
+  truth shared by the browser preview and the SDI wire (see [`SPEC.md`](SPEC.md)).
+- **Zero dependencies** — pure HTML/CSS/JS.
 
 ---
 
@@ -20,107 +31,82 @@ Zero dependencies. Single HTML files. Works offline on any device.
 
 ```
 tsg-lineup/
-├── core/                  Main application
-│   └── tsg-lineup.html    Primary test generator with sync
-│
-├── patterns/              Broadcast test patterns
-│   ├── ChromaDuMonde.html Camera alignment chart
+├── index.html            Entry — redirects to the current app
+├── core/
+│   ├── tsg-lineup.html    The application (test generator + sync)
+│   └── signal-render.js   Signal renderer, bit-exact with the SDI master
+├── patterns/             Reference test patterns
+│   ├── ebu-lineup.json    The shared signal master (SPEC.md §7)
+│   ├── ChromaDuMonde.html Camera colour-alignment chart
 │   ├── tsg-ebu-bars.html  EBU colour bars (16:9)
 │   ├── tsg-philips.html   Philips PM5644 testcard
-│   ├── tsg-testbild-001.html  EBU testbild
-│   └── assets/
-│
-├── generators/            Test signal generators
-│   ├── Lineup-001.html    TGLF framework v1
-│   ├── Lineup-002.html    TGLF framework v2
-│   └── tsg-test-gen-v2.html  Broadcast test generator
-│
-├── tools/                 Utilities
-│   ├── test-qr.html       QR code sync testing
-│   └── favicon.*          Icon assets
-│
-├── docs/                  Documentation
-│   ├── ADVANCED-FEATURES.md  Web Components, WebRTC, WASM
-│   ├── SYNC-GUIDE.md      Multi-device synchronisation
-│   └── TESTING-SYNC.md    Sync verification procedures
-│
-└── legacy/                Historical versions
-    └── tsg-lineup-v1.html
+│   └── tsg-testbild-001.html
+└── SPEC.md               Normative signal-domain specification
 ```
 
 ---
 
-## Quick Start
+## Quick start
 
-Open any HTML file directly in a browser:
+Open the app directly:
 
 ```bash
 open core/tsg-lineup.html
 ```
 
-Or serve locally:
+or serve locally:
 
 ```bash
 python3 -m http.server 8080
-# → http://localhost:8080/core/tsg-lineup.html
+# → http://localhost:8080/
 ```
 
 ---
 
 ## Features
 
-### Test Patterns
-- **EBU Colour Bars** – ITU-R BT.801 compliant
-- **PLUGE** – Black level reference
-- **ChromaDuMonde** – Camera colour alignment
-- **Philips PM5644** – Classic geometry/colour testcard
+- **Reference patterns** — EBU 100/0/75/0 colour bars, PLUGE, ChromaDuMonde,
+  Philips PM5644.
+- **Line-up aids** — countdown leader with tone, programme slates, clock.
+- **Multi-device sync (WebRTC)** — frame-accurate master/display sync with a
+  scan-to-connect QR handshake; no server required.
 
-### Generators
-- **TGLF** – Thåst Global Lineup Framework
-- **Countdown cues** – 10s leader with tone
-- **Program slates** – Clock and sync tone
+### Keyboard shortcuts
 
-### Sync (WebRTC)
-- **Multi-device sync** – Frame-accurate across devices
-- **QR handshake** – Scan to connect, no server needed
-- **Master/slave mode** – One source, multiple displays
+| Key     | Action                    |
+|---------|---------------------------|
+| `Q`     | Toggle QR code (sync mode)|
+| `F`     | Fullscreen                |
+| `Space` | Start / stop              |
 
----
-
-## Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `Q` | Toggle QR code (sync mode) |
-| `F` | Fullscreen |
-| `Space` | Start/stop |
-
----
-
-## URL Parameters
+### URL parameters
 
 ```
-tsg-lineup.html?room=studio-a&role=master&state=sync
+core/tsg-lineup.html?room=studio-a&role=master&state=sync
 ```
 
-| Param | Values | Description |
-|-------|--------|-------------|
-| `room` | string | Sync room identifier |
-| `role` | `master`, `slave` | Device role |
-| `state` | `sync`, `bars`, `pluge` | Initial state |
+| Param   | Values                  | Description          |
+|---------|-------------------------|----------------------|
+| `room`  | string                  | Sync room identifier |
+| `role`  | `master`, `slave`       | Device role          |
+| `state` | `sync`, `bars`, `pluge` | Initial state        |
 
 ---
 
 ## Standards
 
-- ITU-R BT.801 (EBU colour bars)
-- ITU-R BT.814 (PLUGE)
-- SMPTE RP 219 (HD test patterns)
-- ISO/IEC 18004 (QR codes)
+Signal definitions and exact code values are given in [`SPEC.md`](SPEC.md). The
+patterns follow:
+
+- **ITU-R BT.709** — HDTV colorimetry and the luma/colour-difference matrix.
+- **EBU Tech 3299** — HD (100/0/75/0) colour bars.
+- **ITU-R BT.814** — PLUGE.
+- **SMPTE RP 219** — HD reference test patterns.
+- **SMPTE ST 274** — 1920 × 1080 sample structure and timing references.
+- **ISO/IEC 18004** — QR codes (sync handshake).
 
 ---
 
 ## Licence
 
-MIT – David Thåst
-Part of [TSG Suite](https://github.com/FiLORUX)
+© David Thåst. Part of the [TSG](https://thåst.se/tsg) suite.
