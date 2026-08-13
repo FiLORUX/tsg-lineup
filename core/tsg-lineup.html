@@ -1786,6 +1786,26 @@ init();
         });
     } catch (e) {
         console.warn('[signal-render] shared spec unavailable (e.g. file://); using bespoke drawing:', e);
+
+        // Say so on the picture, not only in a console nobody has open.
+        //
+        // The bespoke fallback is close but NOT the spec: its ramp runs
+        // #101010→#EBEBEB rather than the spec's 0.0→1.0, so its levels differ
+        // from what the SDI wire carries. SIGNAL-SPEC.md §6 requires that the
+        // preview and the wire encode one master; when that guarantee is not
+        // being met the operator has to be able to see it, or a scope reading
+        // taken against this screen is quietly wrong.
+        window.addEventListener('DOMContentLoaded', () => {
+            const warning = document.createElement('div');
+            warning.textContent = 'SPEC UNAVAILABLE · bespoke drawing · levels are NOT signal-accurate';
+            warning.style.cssText = [
+                'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99999',
+                'padding:6px 12px', 'background:#b00020', 'color:#fff',
+                'font:600 13px/1.3 system-ui,sans-serif', 'letter-spacing:.04em',
+                'text-align:center', 'pointer-events:none'
+            ].join(';');
+            document.body.appendChild(warning);
+        });
     }
 
     let cached = null;
