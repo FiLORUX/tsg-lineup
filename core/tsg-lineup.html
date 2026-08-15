@@ -1794,19 +1794,41 @@ init();
     // page paints immediately with the bespoke fallback, and the spec layer
     // binds the moment the module and spec actually arrive.
     (async () => {
+    // A request can stall without ever failing — observed repeatedly: the
+    // fetch of signal-render.js sat in flight forever while the rest of the
+    // page was healthy. An await on such a request never settles, so every
+    // network step here is raced against a timeout and retried on a
+    // cache-busted URL, which forces a fresh request instead of joining the
+    // wedged one. The stuck request itself is beyond saving; the point is
+    // that nothing waits for it.
+    const eventually = async (attempt) => {
+        for (let i = 0; i < 4; i++) {
+            try {
+                return await Promise.race([
+                    attempt(i === 0 ? '' : `?retry=${i}`),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('timed out')), 2000 * (i + 1))),
+                ]);
+            } catch (e) { /* try again on a fresh URL */ }
+        }
+        throw new Error('unreachable after retries');
+    };
+
     let renderSpecToImageData = null;
     let EBU_LINEUP = null;
     try {
-        ({ renderSpecToImageData } = await import('./signal-render.js'));
+        ({ renderSpecToImageData } =
+            await eventually((bust) => import('./signal-render.js' + bust)));
 
         // Fetch the single shared spec — the exact same file the Rust renderer
         // compiles in, so the SDI wire and this preview encode one source of
         // truth. Over HTTP this succeeds; a file:// open blocks the fetch, and
         // the bespoke fallback keeps drawing.
-        EBU_LINEUP = await fetch('../patterns/ebu-lineup.json').then((r) => {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-        });
+        EBU_LINEUP = await eventually((bust) =>
+            fetch('../patterns/ebu-lineup.json' + bust).then((r) => {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            }));
     } catch (e) {
         console.warn('[signal-render] shared spec unavailable (e.g. file://); using bespoke drawing:', e);
 
