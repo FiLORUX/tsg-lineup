@@ -9,8 +9,19 @@
 <meta name="description" content="Thåst Signal Generator - A browser-based toolkit for broadcast line-up, tone, PLUGE, testcards, and visual sync references. Built entirely in HTML, CSS, and vanilla JavaScript.">
 <style>
 /* No remote font import: this tool must run on air-gapped studio networks.
-   'Share Tech Mono' is used when installed locally and degrades to the system
-   monospace face otherwise (see the font-family fallbacks below). */
+   The face is vendored in ../assets/fonts and declared here, so every machine
+   draws the same letterforms — the SDI renderer embeds the same file, which is
+   what makes the two outputs comparable. The font-family fallbacks below now
+   only cover a failure to load the local file. */
+@font-face {
+    font-family: 'Share Tech Mono';
+    src: url('../assets/fonts/ShareTechMono-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    /* block, not swap: a brief blank beats a flash of the wrong glyphs on a
+       reference display, and a same-origin file loads immediately anyway. */
+    font-display: block;
+}
 html, body {
     margin: 0;
     overflow: hidden;
@@ -75,8 +86,8 @@ canvas {
     height: 100%;
     display: flex;
     flex-direction: row;
-    align-items: center; /* Ändra från flex-end till center */
-    justify-content: center; /* Behåll centrerad horisontellt */
+    align-items: center;
+    justify-content: center;
     text-align: center;
     padding: 0;
     white-space: nowrap;
