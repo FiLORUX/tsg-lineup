@@ -1783,14 +1783,26 @@ init();
     and whenever it cannot (e.g. a file:// open where module fetch is blocked).
 -->
 <script type="module">
-    import { renderSpecToImageData } from './signal-render.js';
-
-    // Fetch the single shared spec — the exact same file the Rust renderer
-    // compiles in, so the SDI wire and this preview encode one source of truth.
-    // Over HTTP this succeeds; a file:// open blocks the fetch, so we fall back
-    // to the bespoke drawing (window.__specStaticLayer then keeps returning null).
+    // NOTHING here may gate the document. A static import or a top-level await
+    // makes DOMContentLoaded wait for the module graph, and the fetch of a
+    // subresource can stall without failing — measured against a local server:
+    // the request for signal-render.js intermittently never completed, load
+    // never fired, and the window sat white and unclosable. Every navigation
+    // rolled that dice again, which is why applying a countdown (which reloads
+    // every window with the new query) could take the whole application down.
+    // A dynamic import inside an async function leaves the document free: the
+    // page paints immediately with the bespoke fallback, and the spec layer
+    // binds the moment the module and spec actually arrive.
+    (async () => {
+    let renderSpecToImageData = null;
     let EBU_LINEUP = null;
     try {
+        ({ renderSpecToImageData } = await import('./signal-render.js'));
+
+        // Fetch the single shared spec — the exact same file the Rust renderer
+        // compiles in, so the SDI wire and this preview encode one source of
+        // truth. Over HTTP this succeeds; a file:// open blocks the fetch, and
+        // the bespoke fallback keeps drawing.
         EBU_LINEUP = await fetch('../patterns/ebu-lineup.json').then((r) => {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
@@ -1806,7 +1818,11 @@ init();
         // preview and the wire encode one master; when that guarantee is not
         // being met the operator has to be able to see it, or a scope reading
         // taken against this screen is quietly wrong.
-        window.addEventListener('DOMContentLoaded', () => {
+        // The document no longer waits for this module, so DOMContentLoaded may
+        // already be behind us — a listener alone would then never fire and the
+        // warning would be silently lost, which is the one failure this banner
+        // exists to prevent.
+        const showWarning = () => {
             const warning = document.createElement('div');
             warning.textContent = 'SPEC UNAVAILABLE · bespoke drawing · levels are NOT signal-accurate';
             warning.style.cssText = [
@@ -1816,7 +1832,12 @@ init();
                 'text-align:center', 'pointer-events:none'
             ].join(';');
             document.body.appendChild(warning);
-        });
+        };
+        if (document.readyState === 'loading') {
+            window.addEventListener('DOMContentLoaded', showWarning);
+        } else {
+            showWarning();
+        }
     }
 
     let cached = null;
@@ -1836,6 +1857,7 @@ init();
         return cached;
     };
     if (EBU_LINEUP) console.log('[signal-render] static layer bound to the shared ebu-lineup spec');
+    })();
 </script>
 <!--
     TSG Suite - Thåst Signal Generator
