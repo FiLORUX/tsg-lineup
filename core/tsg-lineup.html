@@ -38,13 +38,18 @@ canvas {
     left: 0;
     touch-action: none; /* Prevent mobile gestures */
 }
+.slate-title {
+    font-size: 1.25em; /* L step */
+}
 #overlay {
     position: absolute;
     left: 50%;
     transform: translate(-50%, 0);
     color: white;
     font-family: 'Share Tech Mono', monospace;
-    font-size: clamp(14px, 2.5vw, 48px); /* Responsive with limits */
+    /* Type ladder (OVERLAY-DESIGN.md §4): body at M (2vw), the title line
+       one step up via .slate-title. */
+    font-size: clamp(14px, 2vw, 38.4px);
     min-width: 12vw;
     max-width: 56vw;
     text-align: center;
@@ -893,7 +898,12 @@ const waveCtxR = waveR.getContext('2d');
 
 // --- Overlay/Slate-id ---
 
-overlay.innerHTML = slateId.replace(/\\n/g, '<br>');
+{
+    // The first line is the title and takes the L step of the type ladder.
+    const lines = slateId.replace(/\\n/g, '<br>').split('<br>');
+    lines[0] = `<span class="slate-title">${lines[0]}</span>`;
+    overlay.innerHTML = lines.join('<br>');
+}
 
 // The metadata strip: format from the running parameters, alignment and
 // reference facts, and the nameplate — double space as separator until
