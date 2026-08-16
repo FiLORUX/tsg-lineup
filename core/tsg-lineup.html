@@ -151,11 +151,12 @@ canvas {
 #waveformBoxL, #waveformBoxR {
     position: absolute;
     z-index: 4;
-    background: rgba(0,0,0,0.45);
+    /* The instrument-row plate spec (OVERLAY-DESIGN.md §3): black at 54%,
+       radius 14, no shadow, no fade — the SDI renderer draws the same plate
+       and switches it instantly, so the screen does too. */
+    background: rgba(0,0,0,0.54);
     border-radius: 14px;
-    box-shadow: 0 1px 5px #0006;
     opacity: 0;
-    transition: opacity 0.28s cubic-bezier(.4,0,.2,1);
     pointer-events: none;
     display: flex;
     align-items: center;
@@ -212,7 +213,11 @@ canvas {
 
 // Audio levels (current values preserved exactly)
 const AUDIO_LEVELS = {
-    STEREO_IDENT: 0.13,  // -17.7 dBFS
+    // Alignment level per EBU R68: exactly -18.00 dBFS, 10^(-18/20). The
+    // previous 0.13 sat 0.3 dB hot -- found the moment a calibrated meter
+    // with an amber mark at -18.0 was drawn beside it. Matches the SDI
+    // renderer's LEVEL_IDENT to the same digits.
+    STEREO_IDENT: 0.12589254117941673,
     PIP_NORMAL: 0.18,    // -14.9 dBFS
     PIP_EMPHASIS: 0.48   // -6.4 dBFS
 };
@@ -1127,55 +1132,142 @@ function playPipIfNeeded() {
     }
 }
 
-// --- Fake peak-meter/Waveform for demo: ---
-function fakeAudioPeaks(state) {
-    let cs = getCentralSeconds();
+// ─────────────────────────────────────────────────────────────────────────
+// Audio metering — a digital peak programme meter to IEC 60268-18
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The boxes used to carry a simulated waveform. What replaces it is the same
+// instrument the SDI renderer draws (overlay.rs, OVERLAY-DESIGN.md §2): a
+// horizontal bargraph per channel on a −60…0 dBFS scale with the IEC
+// resolution taper, EBU R68 alignment at −18 dBFS as the picture's only
+// amber mark, permitted maximum −9 dBFS (EBU Tech 3205-E) as its only red,
+// and IEC ballistics — instantaneous attack, 20 dB per 1.7 s decay, 1.5 s
+// peak hold. The constants must match the Rust side to the digit.
+const METER = {
+    FLOOR_DB: -60,
+    ALIGNMENT_DB: -18,        // EBU R68
+    PERMITTED_MAX_DB: -9,     // EBU Tech 3205-E
+    DECAY_DB_PER_SEC: 20 / 1.7, // IEC 60268-18
+    HOLD_SEC: 1.5
+};
+
+// Position on the bar, 0 at the floor to 1 at full scale. Piecewise linear:
+// −60…−20 over the first half of the travel, −20…0 over the second — the
+// resolution taper of IEC 60268-18 scales. Identical to meter_position().
+function meterPosition(db) {
+    db = Math.min(0, Math.max(METER.FLOOR_DB, db));
+    return db >= -20 ? 0.5 + (db + 20) / 20 * 0.5
+                     : (db + 60) / 40 * 0.5;
+}
+
+// The peak each channel carries right now, taken from the same law that
+// commands the WebAudio gains — GLITS gaps and the pip window — so the
+// meter indicates what the oscillators emit, exactly as the SDI meter
+// measures the peaks of its generated sample block. Nothing is simulated.
+function exactAudioPeaks(state) {
+    const cs = getCentralSeconds();
     if (state === STATE_STEREOIDENT) {
-        let t = cs % 3;
-        pipPeakL = (t < 2.75) ? (Math.abs(Math.sin(2 * Math.PI * t * 1.2)) * 0.72 + 0.13) : 0.07;
-        pipPeakR = 0.68;
+        const C = TIMING.STEREO_CYCLE_SEC, G = TIMING.STEREO_GAP_SEC;
+        const t = cs % C;
+        const leftOn = t < TIMING.STEREO_LEFT_ON_SEC;
+        const rightOn = !((t >= C - 4 * G && t < C - 3 * G) ||
+                          (t >= C - 2 * G && t < C - G));
+        pipPeakL = leftOn ? AUDIO_LEVELS.STEREO_IDENT : 0;
+        pipPeakR = rightOn ? AUDIO_LEVELS.STEREO_IDENT : 0;
     } else if (state === STATE_SYNC) {
-        let sec = Math.floor(cs);
-        let ms = cs - sec;
-        pipPeakL = ((ms < 0.19) ? 0.92 : 0.09);
-        pipPeakR = ((ms < 0.19) ? 0.92 : 0.09);
+        const sec = Math.floor(cs);
+        const within = cs - sec;
+        const level = within < TIMING.PIP_DURATION_SEC
+            ? (sec % 4 === 0 ? AUDIO_LEVELS.PIP_EMPHASIS : AUDIO_LEVELS.PIP_NORMAL)
+            : 0;
+        pipPeakL = level;
+        pipPeakR = level;
     } else {
         pipPeakL = 0;
         pipPeakR = 0;
     }
 }
 
-// --- WAVEFORM VISUAL ---
-function drawWaveform(waveCtx, peak, color="#32ffcb") {
-    let w = waveCtx.canvas.width, h = waveCtx.canvas.height;
-    waveCtx.clearRect(0, 0, w, h);
-    // Simulerad (ser broadcast ut!): “True Peak”-bar och en “bump”/oscilloscope
-    let margin = Math.round(h * 0.18);
-    let amp = peak;
-    // Main vertical bar
-    waveCtx.save();
-    waveCtx.strokeStyle = color;
-    waveCtx.lineWidth = Math.max(2, Math.round(h * 0.11));
-    waveCtx.beginPath();
-    let cx = w/2;
-    let cy = h/2;
-    let a = Math.max(margin, cy - (amp * (cy - margin)));
-    let b = Math.min(h-margin, cy + (amp * (cy - margin)));
-    waveCtx.moveTo(cx, a);
-    waveCtx.lineTo(cx, b);
-    waveCtx.stroke();
-    // Oscilloscope “bump”
-    waveCtx.strokeStyle = "#fff";
-    waveCtx.lineWidth = 2;
-    waveCtx.beginPath();
-    for (let i = 0; i < w; i++) {
-        let t = i/w * Math.PI*2;
-        let y = cy + Math.sin(t*3.5 + Date.now()/160) * amp * cy * 0.33;
-        if (i === 0) waveCtx.moveTo(i, y);
-        else waveCtx.lineTo(i, y);
+// Ballistics state, advanced with real elapsed time: the canvas is not
+// frame-locked the way the wire is, so the standard's decay — defined in
+// decibels per second — is applied against the actual interval.
+const meterState = {
+    L: { display: METER.FLOOR_DB, hold: METER.FLOOR_DB, holdSince: 0 },
+    R: { display: METER.FLOOR_DB, hold: METER.FLOOR_DB, holdSince: 0 },
+    lastMs: 0
+};
+
+function updateMeterBallistics(nowMs) {
+    // Clamp the interval so a background tab returning after seconds does not
+    // snap the display; it resumes decaying at the lawful rate instead.
+    const dt = meterState.lastMs ? Math.min((nowMs - meterState.lastMs) / 1000, 0.1) : 0;
+    meterState.lastMs = nowMs;
+    const decay = METER.DECAY_DB_PER_SEC * dt;
+
+    for (const [channel, peak] of [[meterState.L, pipPeakL], [meterState.R, pipPeakR]]) {
+        const peakDb = peak > 0
+            ? Math.max(20 * Math.log10(peak), METER.FLOOR_DB)
+            : METER.FLOOR_DB;
+
+        // Attack immediate, decay linear in decibels.
+        channel.display = Math.max(peakDb, channel.display - decay);
+
+        if (peakDb >= channel.hold) {
+            channel.hold = peakDb;
+            channel.holdSince = nowMs;
+        } else if ((nowMs - channel.holdSince) / 1000 > METER.HOLD_SEC) {
+            channel.hold = Math.max(channel.hold - decay, METER.FLOOR_DB);
+        }
     }
-    waveCtx.stroke();
-    waveCtx.restore();
+}
+
+// The bargraph, drawn with the same geometry as the SDI renderer: track
+// inset 6%, bar band 30–70% of the height, grey minor ticks every 5 dB
+// outside the band, white fill turning red above permitted maximum, a 1 px
+// peak-hold tick, and the amber alignment mark last so it reads through
+// the bar — the same priority the per-pixel painter gives it.
+function drawMeter(waveCtx, channel) {
+    const canvas = waveCtx.canvas;
+    // The backing store must match the box, or 1 px marks smear.
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (w > 0 && (canvas.width !== w || canvas.height !== h)) {
+        canvas.width = w;
+        canvas.height = h;
+    }
+    waveCtx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const insetX = Math.round(canvas.width * 0.06);
+    const trackX = insetX;
+    const trackW = canvas.width - 2 * insetX;
+    const barTop = Math.round(canvas.height * 0.30);
+    const barBottom = Math.round(canvas.height * 0.70);
+    const pos = (db) => trackX + Math.round(meterPosition(db) * trackW);
+
+    // Minor ticks, outside the bar band only.
+    waveCtx.fillStyle = '#808080';
+    for (let db = METER.FLOOR_DB; db <= 0; db += 5) {
+        waveCtx.fillRect(pos(db), 0, 1, barTop);
+        waveCtx.fillRect(pos(db), barBottom, 1, canvas.height - barBottom);
+    }
+
+    // The fill: white to the displayed level, red for the portion above
+    // permitted maximum. A hard boundary, like the law it encodes.
+    const levelX = pos(channel.display);
+    const pmlX = pos(METER.PERMITTED_MAX_DB);
+    waveCtx.fillStyle = '#ffffff';
+    waveCtx.fillRect(trackX, barTop, Math.min(levelX, pmlX) - trackX, barBottom - barTop);
+    if (levelX > pmlX) {
+        waveCtx.fillStyle = '#ff0000';
+        waveCtx.fillRect(pmlX, barTop, levelX - pmlX, barBottom - barTop);
+    }
+
+    // Peak hold, one pixel, white.
+    waveCtx.fillStyle = '#ffffff';
+    waveCtx.fillRect(pos(channel.hold), barTop, 1, barBottom - barTop);
+
+    // Alignment: full height, the one amber in the picture, drawn last.
+    waveCtx.fillStyle = '#ffc932';
+    waveCtx.fillRect(pos(METER.ALIGNMENT_DB), 0, 1, canvas.height);
 }
 
 // --- Overlay visibility
@@ -1188,8 +1280,9 @@ function updateWaveformBoxes() {
         waveBoxL.classList.remove("visible");
         waveBoxR.classList.remove("visible");
     }
-    drawWaveform(waveCtxL, pipPeakL, "#32ffcb");
-    drawWaveform(waveCtxR, pipPeakR, "#ffc932");
+    updateMeterBallistics(performance.now());
+    drawMeter(waveCtxL, meterState.L);
+    drawMeter(waveCtxR, meterState.R);
 }
 
 // --- FLASH och central sync ---
@@ -1722,7 +1815,7 @@ function updateLoop() {
 
     // Update waveform visualization (every 27ms)
     if (now - lastUpdate.waveform > UPDATE_INTERVALS.waveform) {
-        fakeAudioPeaks(syncState);
+        exactAudioPeaks(syncState);
         updateWaveformBoxes();
         lastUpdate.waveform = now;
     }
