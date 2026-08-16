@@ -148,6 +148,25 @@ canvas {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
+#metaStrip {
+    /* The metadata strip (OVERLAY-DESIGN.md §5): one S-step line at the
+       top-left margin, instrument-row plate spec. Only what this renderer
+       can prove appears here; the wire-side facts (3G level, AFD, CC) are
+       SDI-only tokens and never shown on screen. */
+    position: absolute;
+    left: 4vw;
+    top: 4.4vh;
+    z-index: 3;
+    background: rgba(0,0,0,0.54);
+    border-radius: 14px;
+    color: white;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 1.2vw; /* S step: 0.6 of the 2vw em */
+    line-height: 1.6;
+    padding: 0 0.6em;
+    white-space: pre;
+    pointer-events: none;
+}
 #waveformBoxL, #waveformBoxR {
     position: absolute;
     z-index: 4;
@@ -198,6 +217,7 @@ canvas {
 <div id="overlay" aria-label="Signal information overlay" role="region"></div>
 <div id="tcBg" class="tc-sync-bg" aria-hidden="true"></div>
 <div id="syncBg" class="tc-sync-bg" aria-hidden="true"></div>
+<div id="metaStrip" aria-label="Signal metadata" role="status"></div>
 <div id="timecode" aria-label="Timecode display" role="status" aria-live="off"></div>
 <div id="syncInfo" aria-label="Sync information display" role="status" aria-live="off"></div>
 <div id="waveformBoxL" aria-label="Left channel audio waveform" role="img"><canvas id="waveL" class="waveform-canvas"></canvas></div>
@@ -735,6 +755,7 @@ function toggleSyncOverlay(visible) {
     // Hide all DOM overlays when QR is visible (so it's not covered)
     const displayValue = visible ? 'none' : '';
     overlay.style.display = displayValue;
+    metaStrip.style.display = displayValue;
     tcBg.style.display = displayValue;
     syncBg.style.display = displayValue;
     timecode.style.display = displayValue;
@@ -873,6 +894,17 @@ const waveCtxR = waveR.getContext('2d');
 // --- Overlay/Slate-id ---
 
 overlay.innerHTML = slateId.replace(/\\n/g, '<br>');
+
+// The metadata strip: format from the running parameters, alignment and
+// reference facts, and the nameplate — double space as separator until
+// U+00B7 joins the font subset (assets/fonts/README.md).
+const metaStrip = document.getElementById('metaStrip');
+{
+    const fpsText = [23.976, 29.97, 59.94].includes(framerate)
+        ? framerate.toFixed(2) : framerate.toFixed(0);
+    metaStrip.textContent =
+        `${resolution}${scanMode}${fpsText}  AL -18  REF EBU  THÅST`;
+}
 function adjustOverlayWidth() {
     let w = window.innerWidth;
     overlay.style.maxWidth = `${Math.round(w * 0.56)}px`;

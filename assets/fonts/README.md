@@ -36,6 +36,10 @@ overlays draw. Anything outside it will render as `.notdef` — extend the subse
 rather than adding a fallback face, because a fallback reintroduces exactly the
 per-machine variation this directory exists to remove.
 
+**Pending addition at the next regeneration:** `·` (U+00B7), wanted as the
+metadata strip's field separator (OVERLAY-DESIGN.md §5); until then both
+renderers use a double space.
+
 Metrics: 1000 units/em, ascent 885, descent −242, advance width 540.
 
 ## Provenance
