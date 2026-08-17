@@ -153,17 +153,19 @@ canvas {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
-#metaStrip {
-    /* The metadata strip (OVERLAY-DESIGN.md §5): one S-step line at the
-       top-left margin, instrument-row plate spec. Only what this renderer
-       can prove appears here; the wire-side facts (3G level, AFD, CC) are
-       SDI-only tokens and never shown on screen. */
+#metaStripL, #metaStripR {
+    /* The metadata tiles (OVERLAY-DESIGN.md §5): two equal plates flanking
+       the slate, tops aligned with it, on the slate's own plate spec
+       (#overlay: rgba 0.58, radius 10). Two S-step lines per tile. Only
+       what this renderer can prove appears here; the wire-side facts
+       (3G level, AFD, CC, clock roles) are SDI-only tokens and never
+       shown on screen. */
     position: absolute;
-    left: 4vw;
     top: 4.4vh;
     z-index: 3;
-    background: rgba(0,0,0,0.54);
-    border-radius: 14px;
+    background: rgba(0,0,0,0.58);
+    border-radius: 10px;
+    box-sizing: border-box;
     color: white;
     font-family: 'Share Tech Mono', monospace;
     font-size: 1.2vw; /* S step: 0.6 of the 2vw em */
@@ -172,6 +174,11 @@ canvas {
     white-space: pre;
     pointer-events: none;
 }
+/* Outer-edge discipline: the left tile reads from the left margin, the
+   right tile ends at the right margin, keeping the centre clear for the
+   slate — the same left/right split as the instrument row beneath. */
+#metaStripL { left: 4vw; text-align: left; }
+#metaStripR { right: 4vw; text-align: right; }
 #waveformBoxL, #waveformBoxR {
     position: absolute;
     z-index: 4;
@@ -222,7 +229,8 @@ canvas {
 <div id="overlay" aria-label="Signal information overlay" role="region"></div>
 <div id="tcBg" class="tc-sync-bg" aria-hidden="true"></div>
 <div id="syncBg" class="tc-sync-bg" aria-hidden="true"></div>
-<div id="metaStrip" aria-label="Signal metadata" role="status"></div>
+<div id="metaStripL" aria-label="Signal metadata" role="status"></div>
+<div id="metaStripR" aria-label="Reference metadata" role="status"></div>
 <div id="timecode" aria-label="Timecode display" role="status" aria-live="off"></div>
 <div id="syncInfo" aria-label="Sync information display" role="status" aria-live="off"></div>
 <div id="waveformBoxL" aria-label="Left channel audio waveform" role="img"><canvas id="waveL" class="waveform-canvas"></canvas></div>
@@ -760,7 +768,8 @@ function toggleSyncOverlay(visible) {
     // Hide all DOM overlays when QR is visible (so it's not covered)
     const displayValue = visible ? 'none' : '';
     overlay.style.display = displayValue;
-    metaStrip.style.display = displayValue;
+    metaStripL.style.display = displayValue;
+    metaStripR.style.display = displayValue;
     tcBg.style.display = displayValue;
     syncBg.style.display = displayValue;
     timecode.style.display = displayValue;
@@ -905,15 +914,29 @@ const waveCtxR = waveR.getContext('2d');
     overlay.innerHTML = lines.join('<br>');
 }
 
-// The metadata strip: format from the running parameters, alignment and
-// reference facts, and the nameplate — double space as separator until
-// U+00B7 joins the font subset (assets/fonts/README.md).
-const metaStrip = document.getElementById('metaStrip');
+// The metadata tiles: the left carries the picture, the right the audio
+// reference and the nameplate — the same discipline split and slate plate
+// spec as the wire renderer. Double space as separator until U+00B7 joins
+// the font subset (assets/fonts/README.md). The left tile's second line is
+// held open with a no-break space: the wire renderer fills it with clock
+// roles this renderer cannot prove, and equal tile geometry is the design.
+const metaStripL = document.getElementById('metaStripL');
+const metaStripR = document.getElementById('metaStripR');
 {
     const fpsText = [23.976, 29.97, 59.94].includes(framerate)
         ? framerate.toFixed(2) : framerate.toFixed(0);
-    metaStrip.textContent =
-        `${resolution}${scanMode}${fpsText}  AL -18  REF EBU  THÅST`;
+    metaStripL.textContent = `${resolution}${scanMode}${fpsText}\n `;
+    metaStripR.textContent = `AL -18  REF EBU\nTHÅST SIGNAL GENESIS`;
+
+    // Equal tiles by construction, as on the wire: both take the width of
+    // the widest content.
+    const equaliseMetaTiles = () => {
+        metaStripL.style.width = metaStripR.style.width = '';
+        const widest = Math.max(metaStripL.offsetWidth, metaStripR.offsetWidth);
+        metaStripL.style.width = metaStripR.style.width = `${widest}px`;
+    };
+    equaliseMetaTiles();
+    window.addEventListener('resize', equaliseMetaTiles);
 }
 function adjustOverlayWidth() {
     let w = window.innerWidth;
