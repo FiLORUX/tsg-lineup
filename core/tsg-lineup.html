@@ -2035,6 +2035,34 @@ function updateTimecode() {
         }
         let pad = n => n.toString().padStart(2, '0');
         timeText = `${pad(hrs)}:${pad(min)}:${pad(sec)}:${pad(frame)}`;
+    } else if (isDropFrame) {
+        // SMPTE ST 12 drop-frame labels, counted from frames since midnight
+        // at the exact rational rate, semicolon before the frames field —
+        // mirrors the SDI renderer's drop_frame_labels to the digit. A
+        // countdown keeps the colon: a duration is never drop-frame.
+        const now = new Date();
+        const seconds = now.getHours() * 3600 + now.getMinutes() * 60
+            + now.getSeconds() + now.getMilliseconds() / 1000;
+        const exactRate = framerate === 59.94 ? 60000 / 1001 : 30000 / 1001;
+        const fpsLabel = framerate === 59.94 ? 60 : 30;
+        const frames = Math.floor(seconds * exactRate);
+        const droppedCount = fpsLabel / 15;          // 2 at 30, 4 at 60
+        const perMinute = fpsLabel * 60 - droppedCount;
+        const perTen = perMinute * 10 + droppedCount; // minute 0 keeps its frames
+        const tens = Math.floor(frames / perTen);
+        let rem = frames % perTen;
+        let minutesTotal, frameInMinute;
+        if (rem < fpsLabel * 60) {
+            minutesTotal = tens * 10;
+            frameInMinute = rem;
+        } else {
+            rem -= fpsLabel * 60;
+            minutesTotal = tens * 10 + 1 + Math.floor(rem / perMinute);
+            frameInMinute = rem % perMinute + droppedCount;
+        }
+        const pad = (v) => String(v).padStart(2, '0');
+        timeText = `${pad(Math.floor(minutesTotal / 60) % 24)}:${pad(minutesTotal % 60)}`
+            + `:${pad(Math.floor(frameInMinute / fpsLabel))};${pad(frameInMinute % fpsLabel)}`;
     } else {
         const now = new Date();
         const hrs = now.getHours().toString().padStart(2, '0');
