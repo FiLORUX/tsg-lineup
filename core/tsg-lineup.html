@@ -433,7 +433,7 @@ else if (resParam.includes('4320')) resolution = '4320';
 const isDropFrame = (framerate === 29.97 || framerate === 59.94);
 
 // === Slate-id + EBU-rad ===
-let slateId = params.get('slate') || 'TSG SUITE<br>Thåst Signal Generator'; // mutable - ändras nedan
+let slateId = params.get('slate') || 'TSG SUITE<br>Thåst Signal Genesis'; // mutable - reassigned below
 
 // Visar EBU-rad som "EBU Tech 3299: 1080p/50" etc
 function ebuFormat(scan, fps, df) {
