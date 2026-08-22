@@ -372,7 +372,7 @@ const ebuColors709 = [
 
 const redRec709 = '#B41010';  // Broadcast-safe röd
 const params = new URLSearchParams(window.location.search);
-const STATE_MOS = 0, STATE_STEREOIDENT = 1, STATE_SYNC = 2;
+const STATE_MOS = 0, STATE_STEREOIDENT = 1, STATE_SYNC = 2, STATE_CHID = 3;
 let syncState = STATE_MOS;
 
 // === Framerate-parsing med stöd för broadcast-konventioner ===
@@ -957,6 +957,7 @@ let audioCtx;
 let identOscL, identOscR, identGainL, identGainR, identPannerL, identPannerR;
 let normalOsc, pipGain, lastPipSecond = -1000;
 let pipPeakL = 0, pipPeakR = 0;
+const chidPeaks = new Float32Array(16);
 
 // ==========================================
 // VISUAL SYNC STATE
@@ -1126,6 +1127,7 @@ function stopAllAudio() {
         if (identOscR) identOscR.stop(); identOscR = null;
         if (normalOsc) normalOsc.stop(); normalOsc = null;
     } catch (e) {}
+    stopChid();
 }
 function startStereoIdent() {
     safeAudioCall(() => {
@@ -1169,6 +1171,111 @@ function stopStereoIdent() {
         if (identOscL) identOscL.stop(); identOscL = null;
         if (identOscR) identOscR.stop(); identOscR = null;
     } catch (e) {}
+}
+
+// --------- CHANNEL IDENT AUDIO (preview fold) ---------
+//
+// The wire carries sixteen discrete channels; the browser owns a stereo
+// pair. The preview fold: odd channels pan left, even right, and each side
+// carries the LOUDEST single channel it represents — never the sum, which
+// would overload the pair and misstate every level in the ladder. Gain
+// moves ride a 3 ms ramp: the browser cannot gate on sample-exact zero
+// crossings the way the wire does (chid.rs), and a stepped AudioParam
+// clicks. The ramp is far below the meter's attack, so the meters —
+// driven from the plan, not the ramp — are unaffected.
+let chidNodes = null;
+function startChid() {
+    safeAudioCall(() => {
+        stopAllAudio();
+        if (!audioCtx) return;
+        const nodes = { groups: [], phase: null };
+        for (const freq of CHID.GROUP_FREQ) {
+            const osc = audioCtx.createOscillator();
+            osc.frequency.value = freq;
+            const sides = [];
+            for (const pan of [-1, 1]) {
+                const gain = audioCtx.createGain();
+                gain.gain.value = 0;
+                const panner = audioCtx.createStereoPanner();
+                panner.pan.value = pan;
+                osc.connect(gain).connect(panner).connect(audioCtx.destination);
+                sides.push(gain);
+            }
+            osc.start();
+            nodes.groups.push({ osc, left: sides[0], right: sides[1] });
+        }
+        // The phase section: one 2 kHz source; the right leg switches
+        // between direct (mono), a quarter-period delay (90 degrees, the
+        // widest correct image) and an inverter (180 degrees).
+        {
+            const osc = audioCtx.createOscillator();
+            osc.frequency.value = CHID.PHASE_FREQ;
+            const leftGain = audioCtx.createGain();
+            leftGain.gain.value = 0;
+            const leftPan = audioCtx.createStereoPanner();
+            leftPan.pan.value = -1;
+            osc.connect(leftGain).connect(leftPan).connect(audioCtx.destination);
+
+            const rightPan = audioCtx.createStereoPanner();
+            rightPan.pan.value = 1;
+            rightPan.connect(audioCtx.destination);
+            const direct = audioCtx.createGain();
+            direct.gain.value = 0;
+            osc.connect(direct).connect(rightPan);
+            const delay = audioCtx.createDelay();
+            delay.delayTime.value = 1 / (4 * CHID.PHASE_FREQ);
+            const quad = audioCtx.createGain();
+            quad.gain.value = 0;
+            osc.connect(delay).connect(quad).connect(rightPan);
+            const invert = audioCtx.createGain();
+            invert.gain.value = -1;
+            const anti = audioCtx.createGain();
+            anti.gain.value = 0;
+            osc.connect(invert).connect(anti).connect(rightPan);
+            osc.start();
+            nodes.phase = { osc, left: leftGain, branches: [direct, quad, anti] };
+        }
+        chidNodes = nodes;
+    }, 'Channel ident start');
+}
+
+function updateChid() {
+    if (!chidNodes || !audioCtx) return;
+    const plan = chidPlan(chidBlock());
+    const t = audioCtx.currentTime;
+    const RAMP = 0.003;
+    const set = (param, value) => {
+        param.cancelScheduledValues(t);
+        param.setValueAtTime(param.value, t);
+        param.linearRampToValueAtTime(value, t + RAMP);
+    };
+    const phased = plan.phaseMode !== null;
+    for (let group = 0; group < 4; group++) {
+        let left = 0, right = 0;
+        if (!phased) {
+            for (let ch = 0; ch < 16; ch++) {
+                if (plan.freqOf(ch) !== CHID.GROUP_FREQ[group]) continue;
+                if (ch % 2 === 0) left = Math.max(left, plan.levels[ch]);
+                else right = Math.max(right, plan.levels[ch]);
+            }
+        }
+        set(chidNodes.groups[group].left.gain, left);
+        set(chidNodes.groups[group].right.gain, right);
+    }
+    const phaseLevel = phased ? plan.levels[0] : 0;
+    set(chidNodes.phase.left.gain, phaseLevel);
+    chidNodes.phase.branches.forEach((branch, mode) => {
+        set(branch.gain, phased && mode === plan.phaseMode ? phaseLevel : 0);
+    });
+}
+
+function stopChid() {
+    if (!chidNodes) return;
+    try {
+        chidNodes.groups.forEach((group) => group.osc.stop());
+        chidNodes.phase.osc.stop();
+    } catch (e) {}
+    chidNodes = null;
 }
 
 // --------- SYNC PIPAR (ALLA TAKTER) även i LIP SYNC efter LIP SYNC-text -----
@@ -1216,6 +1323,114 @@ const METER = {
     HOLD_SEC: 1.5
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+// The sixteen-channel identification sequence (state CHID)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The sequence's single source of truth is the SDI renderer's chid.rs; the
+// constants and the block arithmetic here must match it to the digit, the
+// same contract the meter constants carry. One 96-second cycle on the wall
+// clock (getCentralSeconds % 96), so screen and wire — and every generator
+// in a sync group — sit on the same sequence position at the same instant.
+const CHID = {
+    BLOCK_SEC: 0.25,
+    CYCLE_SEC: 96,
+    A_SLOT: 12,
+    B_START: 192, B_UNIT: 8,
+    C_START: 224, C_ALL: 8, C_STEP: 2,
+    D_START: 268, D_UNIT: 10,
+    E_START: 298, E_UNIT: 8, E_END: 370,
+    GROUP_FREQ: [1000, 800, 600, 400],   // ST 299 groups A-D by pitch
+    PHASE_FREQ: 2000,                    // the BLITS phase-check pitch
+    LEVEL_AL: 0.12589254117941673,       // EBU R68 alignment, −18 dBFS
+    LADDER: [
+        [0.0707945784384138, "-23 DBFS"],    // EBU R128 programme target
+        [0.1, "-20 DBFS"],                   // SMPTE RP 155 reference
+        [0.12589254117941673, "-18 DBFS AL"],// EBU R68 alignment
+        [0.251188643150958, "-12 DBFS"],
+        [0.35481338923357547, "-9 DBFS"],    // EBU R68 permitted maximum
+        [0.5011872336272722, "-6 DBFS"],
+        [0.7079457843841379, "-3 DBFS"],
+        [0.8912509381337456, "-1 DBFS"],     // EBU R128 maximum true peak
+        [1.0, "0 DBFS"]                      // digital full scale
+    ]
+};
+
+function chidBlock() {
+    return Math.floor((getCentralSeconds() % CHID.CYCLE_SEC) / CHID.BLOCK_SEC);
+}
+
+// The gating plan for one block: a level per channel, the tone frequency the
+// active channels carry, and the phase-section mode. Mirrors chid::sample's
+// gates; the browser applies them to oscillator gains where the wire applies
+// them to samples.
+function chidPlan(block) {
+    const levels = new Float32Array(16);
+    let freqOf = (ch) => CHID.GROUP_FREQ[ch >> 2];
+    let phaseMode = null;
+    if (block < CHID.B_START) {
+        const slot = Math.floor(block / CHID.A_SLOT);
+        const within = block % CHID.A_SLOT;
+        const pips = (slot % 4) + 1;
+        const on = within < 2 * pips ? within % 2 === 0 : within < CHID.A_SLOT - 1;
+        if (on) levels[slot] = CHID.LEVEL_AL;
+    } else if (block < CHID.C_START) {
+        const rel = block - CHID.B_START;
+        const group = Math.floor(rel / CHID.B_UNIT);
+        if (rel % CHID.B_UNIT < 6) {
+            for (let ch = group * 4; ch < group * 4 + 4; ch++) levels[ch] = CHID.LEVEL_AL;
+        }
+    } else if (block < CHID.D_START) {
+        const rel = block - CHID.C_START;
+        const muted = rel < CHID.C_ALL
+            ? 0
+            : Math.min(Math.floor((rel - CHID.C_ALL) / CHID.C_STEP) + 1, 16);
+        for (let ch = muted; ch < 16; ch++) levels[ch] = CHID.LEVEL_AL;
+    } else if (block < CHID.E_START) {
+        const rel = block - CHID.D_START;
+        if (rel % CHID.D_UNIT < 8) {
+            phaseMode = Math.floor(rel / CHID.D_UNIT); // 0 mono, 1 quad, 2 anti
+            levels.fill(CHID.LEVEL_AL);
+            freqOf = () => CHID.PHASE_FREQ;
+        }
+    } else if (block < CHID.E_END) {
+        const rel = block - CHID.E_START;
+        if (rel % CHID.E_UNIT < 6) {
+            levels.fill(CHID.LADDER[Math.floor(rel / CHID.E_UNIT)][0]);
+            freqOf = () => CHID.GROUP_FREQ[0];
+        }
+    }
+    return { levels, freqOf, phaseMode };
+}
+
+function chidLabel(block) {
+    const G = ['A', 'B', 'C', 'D'];
+    if (block < CHID.B_START) {
+        const slot = Math.floor(block / CHID.A_SLOT);
+        return `CH ${String(slot + 1).padStart(2, '0')} GRP ${G[slot >> 2]}`;
+    }
+    if (block < CHID.C_START) {
+        return ["GRP A 1-4", "GRP B 5-8", "GRP C 9-12", "GRP D 13-16"]
+            [Math.floor((block - CHID.B_START) / CHID.B_UNIT)];
+    }
+    if (block < CHID.D_START) {
+        const rel = block - CHID.C_START;
+        if (rel < CHID.C_ALL) return "ALL 16";
+        if (rel < CHID.C_ALL + 16 * CHID.C_STEP) {
+            return `MUTE CH ${String(Math.floor((rel - CHID.C_ALL) / CHID.C_STEP) + 1).padStart(2, '0')}`;
+        }
+        return "SILENCE";
+    }
+    if (block < CHID.E_START) {
+        return ["PHASE MONO", "PHASE 90", "PHASE 180"]
+            [Math.floor((block - CHID.D_START) / CHID.D_UNIT)];
+    }
+    if (block < CHID.E_END) {
+        return CHID.LADDER[Math.floor((block - CHID.E_START) / CHID.E_UNIT)][1];
+    }
+    return "CH IDENT";
+}
+
 // Position on the bar, 0 at the floor to 1 at full scale. Piecewise linear:
 // −60…−20 over the first half of the travel, −20…0 over the second — the
 // resolution taper of IEC 60268-18 scales. Identical to meter_position().
@@ -1247,10 +1462,17 @@ function exactAudioPeaks(state) {
             : 0;
         pipPeakL = level;
         pipPeakR = level;
+    } else if (state === STATE_CHID) {
+        const plan = chidPlan(chidBlock());
+        chidPeaks.set(plan.levels);
+        pipPeakL = plan.levels[0];
+        pipPeakR = plan.levels[1];
+        return;
     } else {
         pipPeakL = 0;
         pipPeakR = 0;
     }
+    chidPeaks.fill(0);
 }
 
 // Ballistics state, advanced with real elapsed time: the canvas is not
@@ -1259,8 +1481,29 @@ function exactAudioPeaks(state) {
 const meterState = {
     L: { display: METER.FLOOR_DB, hold: METER.FLOOR_DB, holdSince: 0 },
     R: { display: METER.FLOOR_DB, hold: METER.FLOOR_DB, holdSince: 0 },
+    // One channel per embedded channel for the CHID bank, same law per bar.
+    bank: Array.from({ length: 16 }, () => (
+        { display: METER.FLOOR_DB, hold: METER.FLOOR_DB, holdSince: 0 }
+    )),
     lastMs: 0
 };
+
+// One channel's IEC ballistics step, shared by the stereo pair and the bank.
+function applyBallistics(channel, peak, decay, nowMs) {
+    const peakDb = peak > 0
+        ? Math.max(20 * Math.log10(peak), METER.FLOOR_DB)
+        : METER.FLOOR_DB;
+
+    // Attack immediate, decay linear in decibels.
+    channel.display = Math.max(peakDb, channel.display - decay);
+
+    if (peakDb >= channel.hold) {
+        channel.hold = peakDb;
+        channel.holdSince = nowMs;
+    } else if ((nowMs - channel.holdSince) / 1000 > METER.HOLD_SEC) {
+        channel.hold = Math.max(channel.hold - decay, METER.FLOOR_DB);
+    }
+}
 
 function updateMeterBallistics(nowMs) {
     // Clamp the interval so a background tab returning after seconds does not
@@ -1269,20 +1512,10 @@ function updateMeterBallistics(nowMs) {
     meterState.lastMs = nowMs;
     const decay = METER.DECAY_DB_PER_SEC * dt;
 
-    for (const [channel, peak] of [[meterState.L, pipPeakL], [meterState.R, pipPeakR]]) {
-        const peakDb = peak > 0
-            ? Math.max(20 * Math.log10(peak), METER.FLOOR_DB)
-            : METER.FLOOR_DB;
-
-        // Attack immediate, decay linear in decibels.
-        channel.display = Math.max(peakDb, channel.display - decay);
-
-        if (peakDb >= channel.hold) {
-            channel.hold = peakDb;
-            channel.holdSince = nowMs;
-        } else if ((nowMs - channel.holdSince) / 1000 > METER.HOLD_SEC) {
-            channel.hold = Math.max(channel.hold - decay, METER.FLOOR_DB);
-        }
+    applyBallistics(meterState.L, pipPeakL, decay, nowMs);
+    applyBallistics(meterState.R, pipPeakR, decay, nowMs);
+    for (let channel = 0; channel < 16; channel++) {
+        applyBallistics(meterState.bank[channel], chidPeaks[channel], decay, nowMs);
     }
 }
 
@@ -1335,9 +1568,50 @@ function drawMeter(waveCtx, channel) {
     waveCtx.fillRect(pos(METER.ALIGNMENT_DB), 0, 1, canvas.height);
 }
 
+// The CHID bank: eight slim bars per box (channels 1-8 left, 9-16 right),
+// same scale, same law per bar as the stereo form. The 5 dB ticks are
+// omitted — the row gaps are too thin to carry them without reading as
+// noise; the amber alignment mark carries the calibration. Mirrors the SDI
+// renderer's bank form.
+function drawMeterBank(waveCtx, base) {
+    const canvas = waveCtx.canvas;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (w > 0 && (canvas.width !== w || canvas.height !== h)) {
+        canvas.width = w;
+        canvas.height = h;
+    }
+    waveCtx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const insetX = Math.round(canvas.width * 0.06);
+    const trackX = insetX;
+    const trackW = canvas.width - 2 * insetX;
+    const pos = (db) => trackX + Math.round(meterPosition(db) * trackW);
+    const rowH = canvas.height / 8;
+    const pmlX = pos(METER.PERMITTED_MAX_DB);
+
+    for (let row = 0; row < 8; row++) {
+        const channel = meterState.bank[base + row];
+        const top = Math.round(row * rowH + rowH * 0.25);
+        const bottom = Math.round(row * rowH + rowH * 0.80);
+        const levelX = pos(channel.display);
+        waveCtx.fillStyle = '#ffffff';
+        waveCtx.fillRect(trackX, top, Math.min(levelX, pmlX) - trackX, bottom - top);
+        if (levelX > pmlX) {
+            waveCtx.fillStyle = '#ff0000';
+            waveCtx.fillRect(pmlX, top, levelX - pmlX, bottom - top);
+        }
+        waveCtx.fillStyle = '#ffffff';
+        waveCtx.fillRect(pos(channel.hold), top, 1, bottom - top);
+    }
+
+    waveCtx.fillStyle = '#ffc932';
+    waveCtx.fillRect(pos(METER.ALIGNMENT_DB), 0, 1, canvas.height);
+}
+
 // --- Overlay visibility
 function updateWaveformBoxes() {
-    let show = (syncState === STATE_STEREOIDENT || syncState === STATE_SYNC);
+    let show = (syncState === STATE_STEREOIDENT || syncState === STATE_SYNC
+        || syncState === STATE_CHID);
     if (show) {
         waveBoxL.classList.add("visible");
         waveBoxR.classList.add("visible");
@@ -1346,8 +1620,13 @@ function updateWaveformBoxes() {
         waveBoxR.classList.remove("visible");
     }
     updateMeterBallistics(performance.now());
-    drawMeter(waveCtxL, meterState.L);
-    drawMeter(waveCtxR, meterState.R);
+    if (syncState === STATE_CHID) {
+        drawMeterBank(waveCtxL, 0);
+        drawMeterBank(waveCtxR, 8);
+    } else {
+        drawMeter(waveCtxL, meterState.L);
+        drawMeter(waveCtxR, meterState.R);
+    }
 }
 
 // --- FLASH och central sync ---
@@ -1757,6 +2036,10 @@ function updateSync() {
         syncHtml = `<span class="sync-main">MOS</span>`;
     } else if (syncState === STATE_STEREOIDENT) {
         syncHtml = `<span class="sync-main">STEREO IDENT</span>`;
+    } else if (syncState === STATE_CHID) {
+        // The plate follows the audio sequence, exactly as the SDI plate
+        // follows chid::label.
+        syncHtml = `<span class="sync-main">${chidLabel(chidBlock())}</span>`;
     } else if (showLipSync) {
         syncHtml = `<span class="sync-main">LIP SYNC</span>`;
         lipSyncCount++;
@@ -1803,6 +2086,9 @@ function startAudioOnceAndRemoveCover() {
             syncState = STATE_SYNC;
             lipSyncCount = 0;
             stopStereoIdent();
+        } else if (stateParam === "chid" || stateParam === "channelident") {
+            syncState = STATE_CHID;
+            startChid();
         }
     }
 }
@@ -1816,7 +2102,7 @@ window.onclick = function(e) {
     }
     stopAllAudio();
 
-    let nextState = (syncState + 1) % 3;
+    let nextState = (syncState + 1) % 4;
     if (nextState === STATE_SYNC) {
         lipSyncCount = 0;
         stopStereoIdent();
@@ -1824,6 +2110,8 @@ window.onclick = function(e) {
     syncState = nextState;
     if (syncState === STATE_STEREOIDENT) {
         startStereoIdent();
+    } else if (syncState === STATE_CHID) {
+        startChid();
     } else {
         stopStereoIdent();
     }
@@ -1835,6 +2123,7 @@ window.onclick = function(e) {
 
 const UPDATE_INTERVALS = {
     stereoIdent: 45,
+    chid: 45,
     syncPip: 17,
     syncInfo: 23,
     timecode: 1000 / framerate,
@@ -1844,6 +2133,7 @@ const UPDATE_INTERVALS = {
 
 let lastUpdate = {
     stereoIdent: 0,
+    chid: 0,
     syncPip: 0,
     syncInfo: 0,
     timecode: 0,
@@ -1858,6 +2148,12 @@ function updateLoop() {
     if (now - lastUpdate.stereoIdent > UPDATE_INTERVALS.stereoIdent) {
         if (syncState === STATE_STEREOIDENT) updateStereoIdent();
         lastUpdate.stereoIdent = now;
+    }
+
+    // Update channel ident gains (every 45ms)
+    if (now - lastUpdate.chid > UPDATE_INTERVALS.chid) {
+        if (syncState === STATE_CHID) updateChid();
+        lastUpdate.chid = now;
     }
 
     // Update sync pip (every 17ms - ~60fps)
