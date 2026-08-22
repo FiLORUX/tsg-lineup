@@ -1494,6 +1494,11 @@ function applyBallistics(channel, peak, decay, nowMs) {
         ? Math.max(20 * Math.log10(peak), METER.FLOOR_DB)
         : METER.FLOOR_DB;
 
+    // The commanded level right now — the canvas counterpart of the SDI
+    // meter's unweighted RMS reading. The ballistic tail beyond it dims,
+    // so a fade or a loss reads instantly while the bar obeys the law.
+    channel.instant = peakDb;
+
     // Attack immediate, decay linear in decibels.
     channel.display = Math.max(peakDb, channel.display - decay);
 
@@ -1550,14 +1555,22 @@ function drawMeter(waveCtx, channel) {
 
     // The fill: white to the displayed level, red for the portion above
     // permitted maximum. A hard boundary, like the law it encodes.
+    // Solid to the commanded level; the ballistic tail beyond it renders
+    // dimmed, mirroring the SDI meter's RMS-truth layer.
     const levelX = pos(channel.display);
+    const instantX = pos(channel.instant !== undefined ? channel.instant : channel.display);
     const pmlX = pos(METER.PERMITTED_MAX_DB);
-    waveCtx.fillStyle = '#ffffff';
-    waveCtx.fillRect(trackX, barTop, Math.min(levelX, pmlX) - trackX, barBottom - barTop);
-    if (levelX > pmlX) {
-        waveCtx.fillStyle = '#ff0000';
-        waveCtx.fillRect(pmlX, barTop, levelX - pmlX, barBottom - barTop);
-    }
+    const fillTo = (from, to, colour, alpha) => {
+        if (to <= from) return;
+        waveCtx.globalAlpha = alpha;
+        waveCtx.fillStyle = colour;
+        waveCtx.fillRect(from, barTop, to - from, barBottom - barTop);
+        waveCtx.globalAlpha = 1;
+    };
+    fillTo(trackX, Math.min(instantX, pmlX), '#ffffff', 1);
+    if (instantX > pmlX) fillTo(pmlX, instantX, '#ff0000', 1);
+    fillTo(Math.max(trackX, instantX), Math.min(levelX, pmlX), '#ffffff', 0.45);
+    if (levelX > pmlX) fillTo(Math.max(instantX, pmlX), levelX, '#ff0000', 0.45);
 
     // Peak hold, one pixel, white.
     waveCtx.fillStyle = '#ffffff';
@@ -1594,12 +1607,18 @@ function drawMeterBank(waveCtx, base) {
         const top = Math.round(row * rowH + rowH * 0.25);
         const bottom = Math.round(row * rowH + rowH * 0.80);
         const levelX = pos(channel.display);
-        waveCtx.fillStyle = '#ffffff';
-        waveCtx.fillRect(trackX, top, Math.min(levelX, pmlX) - trackX, bottom - top);
-        if (levelX > pmlX) {
-            waveCtx.fillStyle = '#ff0000';
-            waveCtx.fillRect(pmlX, top, levelX - pmlX, bottom - top);
-        }
+        const instantX = pos(channel.instant !== undefined ? channel.instant : channel.display);
+        const fillTo = (from, to, colour, alpha) => {
+            if (to <= from) return;
+            waveCtx.globalAlpha = alpha;
+            waveCtx.fillStyle = colour;
+            waveCtx.fillRect(from, top, to - from, bottom - top);
+            waveCtx.globalAlpha = 1;
+        };
+        fillTo(trackX, Math.min(instantX, pmlX), '#ffffff', 1);
+        if (instantX > pmlX) fillTo(pmlX, instantX, '#ff0000', 1);
+        fillTo(Math.max(trackX, instantX), Math.min(levelX, pmlX), '#ffffff', 0.45);
+        if (levelX > pmlX) fillTo(Math.max(instantX, pmlX), levelX, '#ff0000', 0.45);
         waveCtx.fillStyle = '#ffffff';
         waveCtx.fillRect(pos(channel.hold), top, 1, bottom - top);
     }
