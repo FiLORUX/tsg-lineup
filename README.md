@@ -10,7 +10,7 @@ values and the conformance rules are in **[SPEC.md](SPEC.md)**.
 
 | | |
 |---|---|
-| Live | <https://thåst.se/tsg/lineup> |
+| Live | <https://tsg.thast.live/lineup/> |
 | Installers (SDI over DeckLink) | [Releases](../../releases) |
 | Signal specification | [SPEC.md](SPEC.md) |
 
@@ -48,4 +48,4 @@ SMPTE ST 274 raster · ISO/IEC 18004 QR. Exact code values in [SPEC.md](SPEC.md)
 
 ## Licence
 
-Apache-2.0 · © 2026 David Thåst · part of [TSG](https://thåst.se/tsg).
+Apache-2.0 · © 2026 David Thåst · part of [TSG](https://tsg.thast.live/).
